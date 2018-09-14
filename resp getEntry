@@ -1,0 +1,37 @@
+int i, inRoot = 1;
+
+	for(i = 1; i<MAX_NAME_LENGTH+1 && name[i] != 0; i++){
+		if(name[i] == '/'){
+			inRoot = 0;
+			break;
+		}
+	}
+
+	directory * dir;
+	if(inRoot){
+		dir = &root;
+		i = 0;
+	}
+	else{
+		char dirName[MAX_NAME_LENGTH+1];
+		memset(dirName, '\0', MAX_NAME_LENGTH+1);
+
+		memcpy(&dirName, name, MAX_NAME_LENGTH+1);
+		dirEntry * entry = getEntry(dirName);
+
+		if(entry == NULL)
+			return NULL;
+
+		dir = loadDir(entry->idxBlock);
+	}
+
+	char fileName[MAX_NAME_LENGTH];
+	memset(fileName, '\0', MAX_NAME_LENGTH);
+	strcpy(fileName, &name[i+1]);
+
+	for(i = 0; i < MAX_DIR_ENTRIES/BLOCK_SIZE; i++)
+		if(dir->entries[i].idxBlock != 0)
+			if(strcmp(fileName, dir->entries[i].name) == 0)
+				return &dir->entries[i];
+
+	return NULL;
