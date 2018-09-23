@@ -1,0 +1,31 @@
+/*
+    if ( (strlen(path) == 1) && path[0] == '/') {
+        statbuf->st_mode = S_IFDIR | S_IRWXU | S_IRWXG | S_IRWXO;
+        statbuf->st_uid = 0;
+        statbuf->st_gid = 0;
+        statbuf->st_nlink = 1;
+        statbuf->st_ino = 0;
+        statbuf->st_size = BLOCK_SIZE;
+        statbuf->st_blksize = BLOCK_SIZE;
+        statbuf->st_blocks = 1;
+    } else {
+        dirEntry * entry = getEntry(&path[1]);
+
+        if (entry == NULL){
+        	printf("ENTRY NULL AT GETATTR\n");
+            return -ENOENT;
+        }
+
+        if(entry->isDir)
+      		statbuf->st_mode = S_IFDIR|0777;  	
+        else
+        	statbuf->st_mode = S_IFREG|0777;
+
+        statbuf->st_nlink = 1;
+        statbuf->st_ino = 0;
+        statbuf->st_uid = 0;
+        statbuf->st_gid = 0;
+        statbuf->st_size = entry->size;
+        statbuf->st_blksize = BLOCK_SIZE;
+        statbuf->st_blocks = 0;
+    }*/

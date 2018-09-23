@@ -5,7 +5,10 @@ static struct fuse_operations fuseops = {
 	.readdir = do_readdir,
 	.mknod = do_mknod,
 	.rename = do_rename,
-	.unlink = do_unlink
+	.unlink = do_unlink,
+	.read = do_read,
+	.write = do_write,
+	.mkdir = do_mkdir
 };
 
 int main(int argc, char * argv[]){
@@ -18,6 +21,8 @@ int main(int argc, char * argv[]){
 	printf("\nDevice Size: %ld\n", deviceSize);
 	printf("Blocks for BitMap: %d\n", bitMapBlocks);
 	printf("Blocks for FCB: %d\n\n", FCB_BLOCKS);
+
+	printf("Size of fileIndexBlock: %ld\n", sizeof(fileIndexBlock));
 
 	for(int i = 0; i<2; i++){
 		for(int j = 1; j<argc; j++)

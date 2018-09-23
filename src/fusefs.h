@@ -9,11 +9,12 @@
 #define MAX_DIR_ENTRIES (int)((20480 * 1024)/ENTRY_SIZE)
 #define FCB_BLOCKS (int)((20480 * 1024)/BLOCK_SIZE)
 
-#define FUSE_USE_VERSION 30
+#define FUSE_USE_VERSION 26
 
 #include "device.h"
 #include "bitmap.h"
 #include <fuse.h>
+#include <math.h>
 #include <errno.h>
 
 typedef struct{
@@ -38,7 +39,7 @@ typedef struct {
 } indexBlocks;
 
 typedef struct {
-	indexBlocks idxBlocks[BLOCK_SIZE/sizeof(int)];
+	int idxBlocks[BLOCK_SIZE/sizeof(int)];
 } fileIndexBlock;
 
 int bitMapBlocks;
@@ -55,14 +56,18 @@ void updateFCB();
 void load_root_deviceSize();
 void update_root_deviceSize();
 void freeBlocks(dirEntry * entry);
+void updateDir(directory * dir, int block);
 directory * loadDir(int n);
 dirEntry * getEntry(const char * name);
+char * getDirName(const char * path);
 
 int do_readdir(const char * path, void * buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info * fi);
 int do_getattr(const char * path, struct stat * statbuf);
 int do_mknod(const char * path, mode_t mode, dev_t dev);
 int do_unlink(const char * path);
 int do_rename(const char * from, const char * to);
-int do_unlink(const char * path);
+int do_read(const char * path, char * buf, size_t size, off_t offset, struct fuse_file_info * fileInfo);
+int do_write(const char * path, const char * buf, size_t size, off_t offset, struct fuse_file_info * fileInfo);
+int do_mkdir(const char * path, mode_t mode);
 
 #endif /* _FUSEFS_H_ */
