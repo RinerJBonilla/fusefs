@@ -123,6 +123,20 @@ char * getDirName(const char * path){
 	return dirName;
 }
 
+char * getFileName(const char * path){
+	char * fileName = (char*)malloc(MAX_NAME_LENGTH);
+	int posInName = 0;
+
+	for(int i = 1; i<MAX_NAME_LENGTH && path[i] != 0; i++)
+		if(path[i] == '/')
+			posInName = i+1;
+
+	memset(fileName, '\0', MAX_NAME_LENGTH);
+	memcpy(fileName, &path[posInName], MAX_NAME_LENGTH-posInName);
+
+	return fileName;
+}
+
 dirEntry * getEntry(const char * name){
 	for(int i = 0; i<MAX_DIR_ENTRIES; i++){
 		dirEntry * entry = &(fcb.entries[i]);
@@ -135,22 +149,28 @@ dirEntry * getEntry(const char * name){
 }
 
 int do_readdir(const char * path, void * buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info * fi){
+	dirEntry * entry;
 	if(strcmp(path, "/") == 0)
 		_directory = root;
-
 	else{
-		dirEntry * entry = getEntry(&path[1]);
-		printf("\nReading Directory with path: %s at block: %d\n", &path[1], entry->idxBlock);
+		entry = getEntry(&path[1]);
 		if(entry == NULL)
 			return -ENOENT;
+		printf("\nReading Directory with path: %s at block: %d\n", &path[1], entry->idxBlock);
 		_directory = *(loadDir(entry->idxBlock));
 	}
 
-	for(int i = 0; i<MAX_DIR_ENTRIES; i++)
-		if(_directory.entries[i].idxBlock != 0)
-			if(filler(buffer, _directory.entries[i].name, NULL, 0) != 0)
+	for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
+		if(_directory.entries[i].idxBlock != 0){
+			printf("File entry of folder: %s at pos %d = %s\n", entry->name, i, _directory.entries[i].name);
+			printf("File Name without path: %s\n", getFileName(_directory.entries[i].name));
+			if(filler(buffer, getFileName(_directory.entries[i].name), NULL, 0) != 0){
+				printf("Error in filler at readdir\n");
 				return -ENOMEM;
-
+			}
+		}
+	}
+	printf("Before returning 0 in readdir\n");
 	return 0;
 }
 
@@ -180,6 +200,7 @@ int do_getattr(const char * path, struct stat * statbuf){
     	else
     		statbuf->st_mode = S_IFREG|0777;
     	statbuf->st_size = entry->size;
+    	statbuf->st_blocks = 1;
     }
     
     return 0;
@@ -238,8 +259,6 @@ int do_mknod(const char * path, mode_t mode, dev_t dev){
 		dir->entries[j].idxBlock = freeBlock;
 		setBit(dir->entries[j].idxBlock, 0);
 		updateBitMap();
-
-		printf("Created file %s at block %d in folder %s\n", dir->entries[j].name, freeBlock, entry_of_dir->name);
 
 		for(i = 0 ; i < MAX_DIR_ENTRIES; i++){
 			if(strcmp(fcb.entries[i].name, "\0") == 0){
@@ -304,10 +323,12 @@ void freeBlocks(dirEntry * entry){
 
 int do_rename(const char * from, const char * to){
 	dirEntry * entry = getEntry(&from[1]);
+	dirEntry * entry_of_dir;
+	directory * dir;
+	int block, posInDir = -1, inRoot = 1;
 
 	if(entry == NULL)
 		return -ENOENT;
-	int posInDir = -1, inRoot = 1;
 
 	for(int i = 1; i<MAX_NAME_LENGTH && from[i] != 0; i++){
 		if(from[i] == '/'){
@@ -316,23 +337,36 @@ int do_rename(const char * from, const char * to){
 		}
 	}
 
-	if(inRoot){
-		for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
-			if(strcmp(root.entries[i].name, &from[1]) == 0){
-				posInDir = i;
-				break;
-			}
-		}
+	if(inRoot)
+		dir = &root;
+	else{
+		char * dirName = getDirName(from);
+		entry_of_dir = getEntry(dirName);
 
-		if(posInDir == -1)
+		if(entry_of_dir == NULL)
 			return -ENOENT;
 
-		strncpy(root.entries[posInDir].name, &to[1], strlen(from));
-		update_root_deviceSize();
+		block = entry_of_dir->idxBlock;
+		printf("Index Block of dir: %d\n", block);
+		dir = loadDir(block);
 	}
-	else{
 
+	for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
+		if(strcmp(dir->entries[i].name, &from[1]) == 0){
+			posInDir = i;
+			break;
+		}
 	}
+
+	if(posInDir == -1)
+		return -ENOENT;
+
+	strncpy(dir->entries[posInDir].name, &to[1], strlen(from));
+
+	if(inRoot)
+		update_root_deviceSize();
+	else
+		updateDir(dir, block);
 
 	strncpy(entry->name, &to[1], strlen(from));
 	updateFCB();
@@ -341,6 +375,11 @@ int do_rename(const char * from, const char * to){
 int do_unlink(const char * path){
 	int i, inRoot = 1;
 	dirEntry * entry = getEntry(&path[1]);
+	dirEntry * entry_of_dir;
+	directory * dir;
+
+	if(entry == NULL)
+		return -ENOENT;
 
 	for(i = 1; i<MAX_NAME_LENGTH && path[i] != 0; i++){
 		if(path[i] == '/'){
@@ -349,36 +388,38 @@ int do_unlink(const char * path){
 		}
 	}
 
-	if(entry == NULL)
-		return -ENOENT;
-
 	memset(entry->name, '\0', MAX_NAME_LENGTH);
 
-	if(inRoot){
-		freeBlocks(entry);
-		entry->idxBlock = 0;
-
-		for(i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
-			if(strcmp(root.entries[i].name, &path[1]) == 0){
-				root.entries[i] = *entry;
-				break;
-			}
-		}
-
-		update_root_deviceSize();
-		return 0;
-	}
+	if(inRoot)
+		dir = &root;
 	else{
+		char * dirName = getDirName(path);
+		entry_of_dir = getEntry(dirName);
 
+		if(entry_of_dir == NULL)
+			return -ENOENT;
+
+		printf("Index Block of dir: %d\n", entry_of_dir->idxBlock);
+		dir = loadDir(entry_of_dir->idxBlock);
 	}
 
-	for(i = 0; i<MAX_DIR_ENTRIES; i++){
-		if(strcmp(fcb.entries[i].name, &path[1]) == 0){
-			fcb.entries[i] = *entry;
-			updateFCB();
+	
+	freeBlocks(entry);
+	entry->idxBlock = 0;
+
+	for(i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
+		if(strcmp(dir->entries[i].name, &path[1]) == 0){
+			dir->entries[i] = *entry;
 			break;
 		}
 	}
+
+	if(inRoot)
+		update_root_deviceSize();
+	else
+		updateDir(dir, entry_of_dir->idxBlock);
+
+	return 0;
 }
 
 int do_read(const char * path, char * buf, size_t size, off_t offset, struct fuse_file_info * fileInfo){
@@ -535,6 +576,7 @@ int do_write(const char * path, const char * buf, size_t size, off_t offset, str
 int do_mkdir(const char * path, mode_t mode){
 	printf("\ndo_mkdir(path = %s)\n", path);
 	int inRoot = 1, posInDir = -1, parentIdxBlock = 0;
+	dirEntry * entry_of_dir;
 	directory * dir;
 
 	for(int i = 1; i<path[i]; i++){
@@ -547,10 +589,16 @@ int do_mkdir(const char * path, mode_t mode){
 	if(inRoot){
 		printf("\nDIR IS ROOT\n");
 		dir = &root;
-		parentIdxBlock = 0;
 	}
 	else{
+		char * dirName = getDirName(path);
+		entry_of_dir = getEntry(dirName);
 
+		if(entry_of_dir == NULL)
+			return -ENOENT;
+
+		printf("Index Block of dir: %d\n", entry_of_dir->idxBlock);
+		dir = loadDir(entry_of_dir->idxBlock);
 	}
 
 	for(int i = 0; i < MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
@@ -597,11 +645,79 @@ int do_mkdir(const char * path, mode_t mode){
 		printf("UPDATED ROOT\n");
 	}
 	else{
-
+		updateDir(dir, entry_of_dir->idxBlock);
 	}
 
 	updateBitMap();
 	printf("UPDATED BIT MAP\n");
+	return 0;
+}
+
+int do_rmdir(const char * path){
+	int inRoot;
+	dirEntry * entry_of_dir = getEntry(&path[1]);
+	dirEntry * entry_of_parent_dir;
+	directory * dir, * parentDir;
+
+	printf("INICIALIZANDO VARIABLES\n");
+
+	if(entry_of_dir == NULL)
+		return -ENOENT;
+
+	for(int i = 1; i<MAX_NAME_LENGTH && path[i] != 0; i++)
+		if(path[i] == '/'){
+			inRoot = 0;
+			break;
+		}
+
+	printf("VERIFICANDO SI ES ROOOT O NO\n");
+	dir = loadDir(entry_of_dir->idxBlock);
+
+	if(inRoot)
+		parentDir = &root;
+	else{
+		char * dirName = getDirName(path);
+		entry_of_parent_dir = getEntry(dirName);
+
+		if(entry_of_parent_dir == NULL)
+			return -ENOENT;
+
+		parentDir = loadDir(entry_of_parent_dir->idxBlock);
+	}
+
+	printf("CARGANDO PARENTDIR\n");
+
+	for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
+		printf("Posicion: %d\n", i);
+		if(dir->entries[i].idxBlock != 0){
+			printf("CONTIENE ARCHIVO: %s en pos: %d\n", dir->entries[i].name, i);
+			freeBlocks(&dir->entries[i]);
+		}
+	}
+
+	printf("ELIMANANDO LO QUE CONTENIA EL FOLDER\n");
+
+	setBit(entry_of_dir->idxBlock, 1);
+	entry_of_dir->idxBlock = 0;
+	printf("ANTED DE MEMSET EN RMDIR\n");
+
+	memset(entry_of_dir->name, '\0', MAX_NAME_LENGTH);
+
+	for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
+		if(strcmp(parentDir->entries[i].name, &path[1]) == 0){
+			parentDir->entries[i] = *entry_of_dir;
+			break;
+		}
+	}
+
+	if(inRoot)
+		update_root_deviceSize();
+	else
+		updateDir(dir, entry_of_dir->idxBlock);
+
+	updateBitMap();
+	updateFCB();
+
 	return 0;
 }
 

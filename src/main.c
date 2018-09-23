@@ -8,7 +8,8 @@ static struct fuse_operations fuseops = {
 	.unlink = do_unlink,
 	.read = do_read,
 	.write = do_write,
-	.mkdir = do_mkdir
+	.mkdir = do_mkdir,
+	.rmdir = do_rmdir
 };
 
 int main(int argc, char * argv[]){
