@@ -369,7 +369,73 @@ int do_rename(const char * from, const char * to){
 		updateDir(dir, block);
 
 	strncpy(entry->name, &to[1], strlen(from));
+
+	if(entry->isDir){
+		renameFilesInFolder(entry->name);
+		renameInFCB(from, to);
+	}
+
 	updateFCB();
+}
+
+void renameInFCB(const char * from, const char * to){
+	printf("\n%s\n", __FUNCTION__);
+	for(int i = 0; i<MAX_DIR_ENTRIES; i++){
+		char * restOfName = (char*)malloc(MAX_NAME_LENGTH);
+		char * newName = (char*)malloc(MAX_NAME_LENGTH);
+
+		memset(restOfName, '\0', MAX_NAME_LENGTH);
+		memset(newName, '\0', MAX_NAME_LENGTH);
+
+		char * substrWithPath = strstr(fcb.entries[i].name, &from[1]);
+		if(substrWithPath != NULL){
+			printf("SUBSTR: %s\n", substrWithPath);
+			memcpy(newName, &to[1], strlen(to)-1);
+			memcpy(&(newName[strlen(to)-1]), &(substrWithPath[strlen(from)-1]), strlen(substrWithPath)-strlen(from)+1);
+			printf("NEW NAME: %s\n", newName);
+
+			memset(fcb.entries[i].name, '\0', MAX_NAME_LENGTH);
+			memcpy(fcb.entries[i].name, newName, strlen(newName));
+		}
+
+		free(restOfName);
+		free(newName);
+	}
+
+	updateFCB();
+}
+
+void renameFilesInFolder(const char * path){
+	dirEntry * entry = getEntry(path);
+
+	if(entry == NULL)
+		return;
+
+	directory * dir = loadDir(entry->idxBlock);
+
+	for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
+		if(dir->entries[i].idxBlock > 0){
+			printf("Renaming some entry in folder\n");
+			printf("Index Block of entry: %d\n", dir->entries[i].idxBlock);
+			char * fileName = getFileName(dir->entries[i].name);
+			char * newName = (char*)malloc(MAX_NAME_LENGTH);
+
+			memset(newName, '\0', MAX_NAME_LENGTH);
+			memcpy(newName, entry->name, strlen(entry->name));
+			memcpy(&(newName[strlen(entry->name)]), "/", 1);
+			memcpy(&(newName[strlen(entry->name)+1]), fileName, MAX_NAME_LENGTH);
+
+			memcpy(dir->entries[i].name, newName, MAX_NAME_LENGTH);
+
+			if(entry->isDir)
+				renameFilesInFolder(dir->entries[i].name);
+
+			free(fileName);
+			free(newName);
+		}
+	}
+
+	updateDir(dir, entry->idxBlock);
 }
 
 int do_unlink(const char * path){
