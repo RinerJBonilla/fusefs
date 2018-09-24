@@ -61,8 +61,9 @@ char * getDirName(const char * path);
 char * getFileName(const char * path);
 void renameFilesInFolder(const char * path);
 void renameInFCB(const char * from, const char * to);
-int getFileBlocks(dirEntry * entry);
+int * getFileBlocks(dirEntry * entry);
 int getFileSize(dirEntry * entry);
+void removeDirsRecursively(directory * dir);
 directory * loadDir(int n);
 dirEntry * getEntry(const char * name);
 

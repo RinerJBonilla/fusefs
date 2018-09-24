@@ -201,7 +201,7 @@ int do_getattr(const char * path, struct stat * statbuf){
     	}
     	else{
     		statbuf->st_mode = S_IFREG|0777;
-    		statbuf->st_blocks = getFileBlocks(entry);
+    		statbuf->st_blocks = (getFileBlocks(entry))[0];
     	}
     	statbuf->st_size = 100;
     }
@@ -209,8 +209,9 @@ int do_getattr(const char * path, struct stat * statbuf){
     return 0;
 }
 
-int getFileBlocks(dirEntry * entry){
-	int blocks = 0;
+int * getFileBlocks(dirEntry * entry){
+	int * blockInfo = (int*)malloc(2);
+	int blocks = 0, dataBlock = 0;
 
 	fileIndexBlock fib;
 	indexBlocks idxBlocks;
@@ -224,16 +225,27 @@ int getFileBlocks(dirEntry * entry){
 		device_read_block(read_index, fib.idxBlocks[i]);
 		memcpy(&idxBlocks, read_index, BLOCK_SIZE);
 
-		for(int j = 0; j<BLOCK_SIZE/sizeof(int) && idxBlocks.dataBlocks[j] > 0; j++)
+		for(int j = 0; j<BLOCK_SIZE/sizeof(int) && idxBlocks.dataBlocks[j] > 0; j++){
 			blocks++;
+			dataBlock = idxBlocks.dataBlocks[j];
+		}
 	}
 
-	return blocks;
+	blockInfo[0] = blocks;
+	blockInfo[1] = dataBlock;
+
+	return blockInfo;
 }
 
 int getFileSize(dirEntry * entry){
-	int blocks = getFileBlocks(entry);
-	int size = blocks
+	int * blockInfo = getFileBlocks(entry);
+	int size = blockInfo[0] > 0 ? (blockInfo[0]-1)*BLOCK_SIZE : 0;
+
+	unsigned char * read_block = (unsigned char*)malloc(BLOCK_SIZE);
+	device_read_block(read_block, blockInfo[1]);
+
+	size += strlen(read_block);
+	return size;
 }
 
 int do_mknod(const char * path, mode_t mode, dev_t dev){
@@ -391,14 +403,16 @@ int do_rename(const char * from, const char * to){
 	if(posInDir == -1)
 		return -ENOENT;
 
-	strncpy(dir->entries[posInDir].name, &to[1], strlen(from));
+	memset(dir->entries[posInDir].name, '\0', MAX_NAME_LENGTH);
+	strncpy(dir->entries[posInDir].name, &to[1], strlen(to)-1);
 
 	if(inRoot)
 		update_root_deviceSize();
 	else
 		updateDir(dir, block);
 
-	strncpy(entry->name, &to[1], strlen(from));
+	memset(entry->name, '\0', MAX_NAME_LENGTH);
+	strncpy(entry->name, &to[1], strlen(to)-1);
 
 	if(entry->isDir){
 		renameFilesInFolder(entry->name);
