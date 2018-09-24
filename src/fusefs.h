@@ -61,6 +61,8 @@ char * getDirName(const char * path);
 char * getFileName(const char * path);
 void renameFilesInFolder(const char * path);
 void renameInFCB(const char * from, const char * to);
+int getFileBlocks(dirEntry * entry);
+int getFileSize(dirEntry * entry);
 directory * loadDir(int n);
 dirEntry * getEntry(const char * name);
 
@@ -73,5 +75,6 @@ int do_read(const char * path, char * buf, size_t size, off_t offset, struct fus
 int do_write(const char * path, const char * buf, size_t size, off_t offset, struct fuse_file_info * fileInfo);
 int do_mkdir(const char * path, mode_t mode);
 int do_rmdir(const char * path);
+int do_truncate(const char *path, off_t newSize);
 
 #endif /* _FUSEFS_H_ */

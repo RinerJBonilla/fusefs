@@ -9,7 +9,8 @@ static struct fuse_operations fuseops = {
 	.read = do_read,
 	.write = do_write,
 	.mkdir = do_mkdir,
-	.rmdir = do_rmdir
+	.rmdir = do_rmdir,
+	.truncate = do_truncate
 };
 
 int main(int argc, char * argv[]){

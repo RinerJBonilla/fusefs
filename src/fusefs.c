@@ -161,7 +161,7 @@ int do_readdir(const char * path, void * buffer, fuse_fill_dir_t filler, off_t o
 	}
 
 	for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
-		if(_directory.entries[i].idxBlock != 0){
+		if(_directory.entries[i].idxBlock > 0){
 			printf("File entry of folder: %s at pos %d = %s\n", entry->name, i, _directory.entries[i].name);
 			printf("File Name without path: %s\n", getFileName(_directory.entries[i].name));
 			if(filler(buffer, getFileName(_directory.entries[i].name), NULL, 0) != 0){
@@ -195,15 +195,45 @@ int do_getattr(const char * path, struct stat * statbuf){
     	if(entry == NULL)
     		return -ENOENT;
 
-    	if(entry->isDir)
+    	if(entry->isDir){
     		statbuf->st_mode = S_IFDIR|0777;
-    	else
+    		statbuf->st_blocks = 1;
+    	}
+    	else{
     		statbuf->st_mode = S_IFREG|0777;
-    	statbuf->st_size = entry->size;
-    	statbuf->st_blocks = 1;
+    		statbuf->st_blocks = getFileBlocks(entry);
+    	}
+    	statbuf->st_size = 100;
     }
     
     return 0;
+}
+
+int getFileBlocks(dirEntry * entry){
+	int blocks = 0;
+
+	fileIndexBlock fib;
+	indexBlocks idxBlocks;
+
+	unsigned char * read_fib = (unsigned char*)malloc(BLOCK_SIZE);
+	device_read_block(read_fib, entry->idxBlock);
+	memcpy(&fib, read_fib, BLOCK_SIZE);
+
+	for(int i = 0; i<BLOCK_SIZE/sizeof(int) && fib.idxBlocks[i] > 0; i++){
+		unsigned char * read_index = (unsigned char *)malloc(BLOCK_SIZE);
+		device_read_block(read_index, fib.idxBlocks[i]);
+		memcpy(&idxBlocks, read_index, BLOCK_SIZE);
+
+		for(int j = 0; j<BLOCK_SIZE/sizeof(int) && idxBlocks.dataBlocks[j] > 0; j++)
+			blocks++;
+	}
+
+	return blocks;
+}
+
+int getFileSize(dirEntry * entry){
+	int blocks = getFileBlocks(entry);
+	int size = blocks
 }
 
 int do_mknod(const char * path, mode_t mode, dev_t dev){
@@ -423,7 +453,7 @@ void renameFilesInFolder(const char * path){
 			memset(newName, '\0', MAX_NAME_LENGTH);
 			memcpy(newName, entry->name, strlen(entry->name));
 			memcpy(&(newName[strlen(entry->name)]), "/", 1);
-			memcpy(&(newName[strlen(entry->name)+1]), fileName, MAX_NAME_LENGTH);
+			memcpy(&(newName[strlen(entry->name)+1]), fileName, strlen(fileName));
 
 			memcpy(dir->entries[i].name, newName, MAX_NAME_LENGTH);
 
@@ -436,6 +466,7 @@ void renameFilesInFolder(const char * path){
 	}
 
 	updateDir(dir, entry->idxBlock);
+	printf("Updated dir after renaming it\n");
 }
 
 int do_unlink(const char * path){
@@ -557,9 +588,9 @@ int do_write(const char * path, const char * buf, size_t size, off_t offset, str
 	fileIndexBlock * fib = (fileIndexBlock *)malloc(sizeof(fileIndexBlock));
 	indexBlocks * db = (indexBlocks *)malloc(sizeof(indexBlocks));
 
-	unsigned char * read_fib = (unsigned char*)malloc(sizeof(*fib));
+	unsigned char * read_fib = (unsigned char*)malloc(BLOCK_SIZE);
 	device_read_block(read_fib, entry->idxBlock);
-	memcpy(fib, read_fib, sizeof(*fib));
+	memcpy(fib, read_fib, BLOCK_SIZE);
 	free(read_fib);
 
 	int firstBlock = floor(((double)offset)/BLOCK_SIZE);
@@ -580,8 +611,8 @@ int do_write(const char * path, const char * buf, size_t size, off_t offset, str
 			updateBitMap();
 			fib->idxBlocks[i+firstBlock] = freeBlock;
 
-			unsigned char * write_fib = (unsigned char*)malloc(sizeof(*fib));
-			memcpy(write_fib, fib, sizeof(*fib));
+			unsigned char * write_fib = (unsigned char*)malloc(BLOCK_SIZE);
+			memcpy(write_fib, fib, BLOCK_SIZE);
 			device_write_block(write_fib, entry->idxBlock);
 			free(write_fib);
 			printf("Allocated new FreeBlock for FIB for file at %d in position %d at block %d\n", entry->idxBlock, i, freeBlock);
@@ -589,9 +620,9 @@ int do_write(const char * path, const char * buf, size_t size, off_t offset, str
 
 		if(fib->idxBlocks[i] != 0){
 			printf("Not null\n");
-			unsigned char * read_index = (unsigned char*)malloc(sizeof(*db));
+			unsigned char * read_index = (unsigned char*)malloc(BLOCK_SIZE);
 			device_read_block(read_index, fib->idxBlocks[i]);
-			memcpy(db, read_index, sizeof(*db));
+			memcpy(db, read_index, BLOCK_SIZE);
 			free(read_index);
 			printf("Reading IndexBlocks in pos %d of FIB at %d\n", i, entry->idxBlock);
 
@@ -606,8 +637,8 @@ int do_write(const char * path, const char * buf, size_t size, off_t offset, str
 					updateBitMap();
 					db->dataBlocks[j+firstBlock] = freeBlock;
 
-					unsigned char * write_data = (unsigned char*)sizeof(*db);
-					memcpy(write_data, db, sizeof(*db));
+					unsigned char * write_data = (unsigned char*)malloc(BLOCK_SIZE);
+					memcpy(write_data, db, BLOCK_SIZE);
 					device_write_block(write_data, fib->idxBlocks[i]);
 					free(write_data);
 					printf("Allocated space for Indexblock in position %d at %d\n", j, fib->idxBlocks[i]);
@@ -755,7 +786,7 @@ int do_rmdir(const char * path){
 
 	for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
 		printf("Posicion: %d\n", i);
-		if(dir->entries[i].idxBlock != 0){
+		if(dir->entries[i].idxBlock > 0){
 			printf("CONTIENE ARCHIVO: %s en pos: %d\n", dir->entries[i].name, i);
 			freeBlocks(&dir->entries[i]);
 		}
@@ -787,4 +818,5 @@ int do_rmdir(const char * path){
 	return 0;
 }
 
+int do_truncate(const char *path, off_t newSize){ return 0; }
 #endif /* _FUSEFS_C_ */
