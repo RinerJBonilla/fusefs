@@ -203,7 +203,7 @@ int do_getattr(const char * path, struct stat * statbuf){
     		statbuf->st_mode = S_IFREG|0777;
     		statbuf->st_blocks = (getFileBlocks(entry))[0];
     	}
-    	statbuf->st_size = 100;
+    	statbuf->st_size = getFileSize(entry);
     }
     
     return 0;
@@ -213,39 +213,52 @@ int * getFileBlocks(dirEntry * entry){
 	int * blockInfo = (int*)malloc(2);
 	int blocks = 0, dataBlock = 0;
 
-	fileIndexBlock fib;
-	indexBlocks idxBlocks;
+	fileIndexBlock * fib = (fileIndexBlock*)malloc(sizeof(fileIndexBlock));
+	indexBlocks * db = (indexBlocks*)malloc(sizeof(indexBlocks));
 
 	unsigned char * read_fib = (unsigned char*)malloc(BLOCK_SIZE);
 	device_read_block(read_fib, entry->idxBlock);
-	memcpy(&fib, read_fib, BLOCK_SIZE);
+	memcpy(fib, read_fib, BLOCK_SIZE);
 
-	for(int i = 0; i<BLOCK_SIZE/sizeof(int) && fib.idxBlocks[i] > 0; i++){
+	for(int i = 0; i<BLOCK_SIZE/sizeof(int) && fib->idxBlocks[i] > 0; i++){
 		unsigned char * read_index = (unsigned char *)malloc(BLOCK_SIZE);
-		device_read_block(read_index, fib.idxBlocks[i]);
-		memcpy(&idxBlocks, read_index, BLOCK_SIZE);
+		device_read_block(read_index, fib->idxBlocks[i]);
+		memcpy(db, read_index, BLOCK_SIZE);
 
-		for(int j = 0; j<BLOCK_SIZE/sizeof(int) && idxBlocks.dataBlocks[j] > 0; j++){
+		for(int j = 0; j<BLOCK_SIZE/sizeof(int) && db->dataBlocks[j] > 0; j++){
 			blocks++;
-			dataBlock = idxBlocks.dataBlocks[j];
+			dataBlock = db->dataBlocks[j];
 		}
 	}
 
 	blockInfo[0] = blocks;
 	blockInfo[1] = dataBlock;
 
+	free(fib);
+	free(db);
+
 	return blockInfo;
 }
 
 int getFileSize(dirEntry * entry){
 	int * blockInfo = getFileBlocks(entry);
+	printf("BLOCKS USED: %d\n", blockInfo[0]);
 	int size = blockInfo[0] > 0 ? (blockInfo[0]-1)*BLOCK_SIZE : 0;
 
 	unsigned char * read_block = (unsigned char*)malloc(BLOCK_SIZE);
 	device_read_block(read_block, blockInfo[1]);
 
 	size += strlen(read_block);
+	printf("STRLEN OF READBLOCK (SIZE) = %d\n", size);
 	return size;
+}
+
+int containsChar(const char * buf, char c){
+	for(int i = 0; i<MAX_NAME_LENGTH && buf[i] != 0; i++)
+		if(buf[i] == c)
+			return 0;
+
+	return 1;
 }
 
 int do_mknod(const char * path, mode_t mode, dev_t dev){
@@ -254,25 +267,16 @@ int do_mknod(const char * path, mode_t mode, dev_t dev){
 	if(S_ISREG(mode)){
 		directory * dir;
 		dirEntry * entry = getEntry(&path[1]);
+		dirEntry * entry_of_dir;
 
 		if(entry != NULL)
 			return -EEXIST;
 
-		int i, inRoot = 1;
-
-		for(i = 1; i<MAX_NAME_LENGTH+1 && path[i] != 0; i++){
-			if(path[i] == '/'){
-				inRoot = 0;
-				break;
-			}
-		}
-
 		int block;
-		dirEntry * entry_of_dir;
-		if(inRoot){
+		int inRoot = containsChar(&(path[1]), '/');
+
+		if(inRoot)
 			dir = &root;
-			i = 0;
-		}
 		else{
 			char * dirName = getDirName(path);
 			entry_of_dir = getEntry(dirName);
@@ -302,7 +306,7 @@ int do_mknod(const char * path, mode_t mode, dev_t dev){
 		setBit(dir->entries[j].idxBlock, 0);
 		updateBitMap();
 
-		for(i = 0 ; i < MAX_DIR_ENTRIES; i++){
+		for(int i = 0 ; i < MAX_DIR_ENTRIES; i++){
 			if(strcmp(fcb.entries[i].name, "\0") == 0){
 				fcb.entries[i] = dir->entries[j];
 				updateFCB();
@@ -348,7 +352,7 @@ void freeBlocks(dirEntry * entry){
 		free(read_index);
 
 		for(int j = 0; j<BLOCK_SIZE/sizeof(int); j++){
-			if(db->dataBlocks[j] != 0){
+			if(db->dataBlocks[j] > 0){
 				setBit(db->dataBlocks[j], 1);
 				db->dataBlocks[j] = 0;
 			}
@@ -367,17 +371,12 @@ int do_rename(const char * from, const char * to){
 	dirEntry * entry = getEntry(&from[1]);
 	dirEntry * entry_of_dir;
 	directory * dir;
-	int block, posInDir = -1, inRoot = 1;
+	int block, posInDir = -1, inRoot;
 
 	if(entry == NULL)
 		return -ENOENT;
 
-	for(int i = 1; i<MAX_NAME_LENGTH && from[i] != 0; i++){
-		if(from[i] == '/'){
-			inRoot = 0;
-			break;
-		}
-	}
+	inRoot = containsChar(&(from[1]), '/');
 
 	if(inRoot)
 		dir = &root;
@@ -420,6 +419,7 @@ int do_rename(const char * from, const char * to){
 	}
 
 	updateFCB();
+	return 0;
 }
 
 void renameInFCB(const char * from, const char * to){
@@ -492,12 +492,7 @@ int do_unlink(const char * path){
 	if(entry == NULL)
 		return -ENOENT;
 
-	for(i = 1; i<MAX_NAME_LENGTH && path[i] != 0; i++){
-		if(path[i] == '/'){
-			inRoot = 0;
-			break;
-		}
-	}
+	inRoot = containsChar(&(path[1]), '/');
 
 	memset(entry->name, '\0', MAX_NAME_LENGTH);
 
@@ -516,6 +511,7 @@ int do_unlink(const char * path){
 
 	
 	freeBlocks(entry);
+	printf("AFTER FREE BLOCKS IN UNLINK\n");
 	entry->idxBlock = 0;
 
 	for(i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
@@ -553,48 +549,30 @@ int do_read(const char * path, char * buf, size_t size, off_t offset, struct fus
 	int numBlocks = ceil(((double)size)/BLOCK_SIZE);
 	int readBlocks = 0, offsetInFile = 0, finished = 0;
 
+	int posInFIB = firstBlock/(BLOCK_SIZE/sizeof(int));
+	int posInDB = firstBlock%(BLOCK_SIZE/sizeof(int));
 
-	for(int i = 0; i<BLOCK_SIZE/sizeof(int); i++){
-		if(fib->idxBlocks[i] != 0){
-			unsigned char * read_index = (unsigned char*)malloc(sizeof(*dataBlock));
-			device_read_block(read_index, fib->idxBlocks[0]);
-			memcpy(dataBlock, read_index, sizeof(*dataBlock));
-			free(read_index);
+	printf("POS IN FIB %d\n", posInFIB);
+	printf("POS IN DB %d\n", posInDB);
 
-			for(int j = 0; readBlocks<numBlocks && j<BLOCK_SIZE/sizeof(int); j++, readBlocks++){
-				if(dataBlock->dataBlocks[j] != 0){
-					unsigned char * blockInfo = (unsigned char*)malloc(BLOCK_SIZE);
-					device_read_block(blockInfo, dataBlock->dataBlocks[j]);
-					memcpy(&info[offsetInFile], blockInfo, BLOCK_SIZE);
-					free(blockInfo);
+	if(posInFIB >= BLOCK_SIZE/sizeof(int) || posInDB >= BLOCK_SIZE/sizeof(int))
+		return -EPERM;
 
-					offsetInFile += BLOCK_SIZE;
-				}
-				else{
-					finished = 1;
-					break;
-				}
-			}
+	unsigned char * read_index = (unsigned char*)malloc(sizeof(*dataBlock));
+	device_read_block(read_index, fib->idxBlocks[posInFIB]);
+	memcpy(dataBlock, read_index, sizeof(*dataBlock));
+	free(read_index);
 
-			if(finished)
-				break;
-		}
-		else
-			break;
-	}
-
-	memcpy(buf, info, size);
-	free(info);
-	free(fib);
-	free(dataBlock);
+	unsigned char * blockInfo = (unsigned char*)malloc(BLOCK_SIZE);
+	device_read_block(blockInfo, dataBlock->dataBlocks[posInDB]);
+	memcpy(buf, blockInfo, BLOCK_SIZE);
+	free(blockInfo);
 
 	return size;
 }
 
 int do_write(const char * path, const char * buf, size_t size, off_t offset, struct fuse_file_info * fileInfo){
 	dirEntry * entry = getEntry(&path[1]);
-	printf("WRITE PATH: %s\n", path);
-	printf("Writing to File %s at %d\n", entry->name, entry->idxBlock);
 
 	if(entry == NULL)
 		return -ENOENT;
@@ -610,158 +588,150 @@ int do_write(const char * path, const char * buf, size_t size, off_t offset, str
 	int firstBlock = floor(((double)offset)/BLOCK_SIZE);
 	int numBlocks = ceil(((double)size)/BLOCK_SIZE);
 
-	printf("\nFIRST BLOCK: %d\n", firstBlock);
-	printf("NUMBLOCKS: %d\n", numBlocks);
-	int writtenBlocks = 0;
+	
+	int posInFIB = firstBlock/(BLOCK_SIZE/sizeof(int));
+	if(posInFIB == 0){
+		printf("\nFIRST BLOCK: %d\n", firstBlock);
+		printf("NUMBLOCKS: %d\n", numBlocks);
+		printf("SIZE: %ld\n", size);
+	}
+	
+	
+	int posInDB = firstBlock%(BLOCK_SIZE/sizeof(int));
 
-	for(int i = 0; i<BLOCK_SIZE/sizeof(int); i++){
-		if(fib->idxBlocks[i] == 0 && writtenBlocks < numBlocks){
-			int freeBlock = getFreeBlock();
-
-			if(freeBlock == -1)
-				return -ENOSPC;
-
-			setBit(freeBlock, 0);
-			updateBitMap();
-			fib->idxBlocks[i+firstBlock] = freeBlock;
-
-			unsigned char * write_fib = (unsigned char*)malloc(BLOCK_SIZE);
-			memcpy(write_fib, fib, BLOCK_SIZE);
-			device_write_block(write_fib, entry->idxBlock);
-			free(write_fib);
-			printf("Allocated new FreeBlock for FIB for file at %d in position %d at block %d\n", entry->idxBlock, i, freeBlock);
-		}
-
-		if(fib->idxBlocks[i] != 0){
-			printf("Not null\n");
-			unsigned char * read_index = (unsigned char*)malloc(BLOCK_SIZE);
-			device_read_block(read_index, fib->idxBlocks[i]);
-			memcpy(db, read_index, BLOCK_SIZE);
-			free(read_index);
-			printf("Reading IndexBlocks in pos %d of FIB at %d\n", i, entry->idxBlock);
-
-			for(int j = 0; j < BLOCK_SIZE/sizeof(int) && writtenBlocks < numBlocks; j++, writtenBlocks++){
-				if(db->dataBlocks[j+firstBlock] == 0){
-					int freeBlock = getFreeBlock();
-
-					if(freeBlock == -1)
-						return -ENOSPC;
-
-					setBit(freeBlock, 0);
-					updateBitMap();
-					db->dataBlocks[j+firstBlock] = freeBlock;
-
-					unsigned char * write_data = (unsigned char*)malloc(BLOCK_SIZE);
-					memcpy(write_data, db, BLOCK_SIZE);
-					device_write_block(write_data, fib->idxBlocks[i]);
-					free(write_data);
-					printf("Allocated space for Indexblock in position %d at %d\n", j, fib->idxBlocks[i]);
-				}
-
-				unsigned char * blockInfo = (unsigned char*)malloc(BLOCK_SIZE);
-				memset(blockInfo, '\0', BLOCK_SIZE);
-
-				device_read_block(blockInfo, db->dataBlocks[j+firstBlock]);
-				int offsetInFile = (int)offset;
-
-				if(offsetInFile >= (BLOCK_SIZE * (j+firstBlock)))
-					offsetInFile -= BLOCK_SIZE * (j+firstBlock);
-
-				memcpy(&blockInfo[offsetInFile], buf, size);
-				device_write_block(blockInfo, db->dataBlocks[j+firstBlock]);
-				free(blockInfo);
-			}
-
-			if(writtenBlocks >= numBlocks)
-				break;
-		}
-		else
-			break;
+	if(posInFIB == 0){
+		printf("POS IN FIB %d\n", posInFIB);
+		printf("POS IN DB %d\n", posInDB);
 	}
 
+	if(posInFIB >= BLOCK_SIZE/sizeof(int) || posInDB >= BLOCK_SIZE/sizeof(int))
+		return -ENOSPC;
+
+	if(fib->idxBlocks[posInFIB] == 0){
+		int freeBlock = getFreeBlock();
+
+		if(freeBlock == -1)
+			return -ENOSPC;
+
+		setBit(freeBlock, 0);
+		updateBitMap();
+		fib->idxBlocks[posInFIB] = freeBlock;
+
+		unsigned char * write_fib = (unsigned char*)malloc(BLOCK_SIZE);
+		memcpy(write_fib, fib, BLOCK_SIZE);
+		device_write_block(write_fib, entry->idxBlock);
+		free(write_fib);
+	}
+
+	unsigned char * read_index = (unsigned char*)malloc(BLOCK_SIZE);
+	device_read_block(read_index, fib->idxBlocks[posInFIB]);
+	memcpy(db, read_index, BLOCK_SIZE);
+	free(read_index);
+
+	if(db->dataBlocks[posInDB] == 0){
+		int freeBlock = getFreeBlock();
+
+		if(freeBlock == -1)
+			return -ENOSPC;
+
+		setBit(freeBlock, 0);
+		updateBitMap();
+		db->dataBlocks[posInDB] = freeBlock;
+
+		unsigned char * write_data = (unsigned char*)malloc(BLOCK_SIZE);
+		memcpy(write_data, db, BLOCK_SIZE);
+		device_write_block(write_data, fib->idxBlocks[posInFIB]);
+		free(write_data);
+	}
+
+	unsigned char * blockInfo = (unsigned char*)malloc(BLOCK_SIZE);
+	memset(blockInfo, '\0', BLOCK_SIZE);
+	device_read_block(blockInfo, db->dataBlocks[posInDB]);
+
+	memcpy(blockInfo, buf, size);
+	device_write_block(blockInfo, db->dataBlocks[posInDB]);
+	free(blockInfo);
 	free(fib);
 	free(db);
+
 	return size;
 }
 
 int do_mkdir(const char * path, mode_t mode){
-	printf("\ndo_mkdir(path = %s)\n", path);
-	int inRoot = 1, posInDir = -1, parentIdxBlock = 0;
-	dirEntry * entry_of_dir;
-	directory * dir;
+	if(S_ISDIR(mode)){
+		printf("\ndo_mkdir(path = %s)\n", path);
+		int inRoot = 1, posInDir = -1, parentIdxBlock = 0;
+		dirEntry * entry_of_dir;
+		directory * dir;
 
-	for(int i = 1; i<path[i]; i++){
-		if(path[i] == '/'){
-			inRoot = 0;
-			break;
+		inRoot = containsChar(&(path[1]), '/');
+
+		if(inRoot){
+			printf("\nDIR IS ROOT\n");
+			dir = &root;
 		}
-	}
+		else{
+			char * dirName = getDirName(path);
+			entry_of_dir = getEntry(dirName);
 
-	if(inRoot){
-		printf("\nDIR IS ROOT\n");
-		dir = &root;
-	}
-	else{
-		char * dirName = getDirName(path);
-		entry_of_dir = getEntry(dirName);
+			if(entry_of_dir == NULL)
+				return -ENOENT;
 
-		if(entry_of_dir == NULL)
-			return -ENOENT;
-
-		printf("Index Block of dir: %d\n", entry_of_dir->idxBlock);
-		dir = loadDir(entry_of_dir->idxBlock);
-	}
-
-	for(int i = 0; i < MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
-		if(dir->entries[i].idxBlock == 0){
-			posInDir = i;
-			printf("PosInDir = %d\n", posInDir);
-			break;
+			printf("Index Block of dir: %d\n", entry_of_dir->idxBlock);
+			dir = loadDir(entry_of_dir->idxBlock);
 		}
-	}
 
-	int freeBlock = getFreeBlock();
-	printf("FREE BLOCK FOR DIR = %d\n", freeBlock);
-	if(posInDir == -1 || freeBlock == -1){
-		printf("NO SPACE LEFT\n");
-		return -ENOSPC;
-	}
-
-	strcpy(dir->entries[posInDir].name, &path[1]);
-	dir->entries[posInDir].isDir = 1;
-	dir->entries[posInDir].size = 0;
-	dir->entries[posInDir].idxBlock = freeBlock;
-	setBit(dir->entries[posInDir].idxBlock, 0);
-
-	printf("ENTRY OF ROOT AT %d is %s\n", posInDir, root.entries[posInDir].name);
-
-	directory newDir;
-	for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++)
-		newDir.entries[i].idxBlock = 0;
-
-	updateDir(&newDir, dir->entries[posInDir].idxBlock);
-
-	for(int i = 0 ; i < MAX_DIR_ENTRIES; i++){
-		if(fcb.entries[i].idxBlock == 0){
-			fcb.entries[i] = dir->entries[posInDir];
-			updateFCB();
-			break;
+		for(int i = 0; i < MAX_DIR_ENTRIES/BLOCK_SIZE; i++){
+			if(dir->entries[i].idxBlock == 0){
+				posInDir = i;
+				printf("PosInDir = %d\n", posInDir);
+				break;
+			}
 		}
-	}
 
-	printf("WROTE NEW DIR AT BLOCK %d\n", dir->entries[posInDir].idxBlock);
+		int freeBlock = getFreeBlock();
+		printf("FREE BLOCK FOR DIR = %d\n", freeBlock);
+		if(posInDir == -1 || freeBlock == -1){
+			printf("NO SPACE LEFT\n");
+			return -ENOSPC;
+		}
 
-	if(inRoot){
-		update_root_deviceSize();
-		printf("UPDATED ROOT\n");
-	}
-	else{
-		updateDir(dir, entry_of_dir->idxBlock);
-	}
+		strcpy(dir->entries[posInDir].name, &path[1]);
+		dir->entries[posInDir].isDir = 1;
+		dir->entries[posInDir].size = 0;
+		dir->entries[posInDir].idxBlock = freeBlock;
+		setBit(dir->entries[posInDir].idxBlock, 0);
 
-	updateBitMap();
-	printf("UPDATED BIT MAP\n");
-	return 0;
+		printf("ENTRY OF ROOT AT %d is %s\n", posInDir, root.entries[posInDir].name);
+
+		directory newDir;
+		for(int i = 0; i<MAX_DIR_ENTRIES/BLOCK_SIZE; i++)
+			newDir.entries[i].idxBlock = 0;
+
+		updateDir(&newDir, dir->entries[posInDir].idxBlock);
+
+		for(int i = 0 ; i < MAX_DIR_ENTRIES; i++){
+			if(fcb.entries[i].idxBlock == 0){
+				fcb.entries[i] = dir->entries[posInDir];
+				updateFCB();
+				break;
+			}
+		}
+
+		printf("WROTE NEW DIR AT BLOCK %d\n", dir->entries[posInDir].idxBlock);
+
+		if(inRoot){
+			update_root_deviceSize();
+			printf("UPDATED ROOT\n");
+		}
+		else{
+			updateDir(dir, entry_of_dir->idxBlock);
+		}
+
+		updateBitMap();
+		printf("UPDATED BIT MAP\n");
+		return 0;
+	}
 }
 
 int do_rmdir(const char * path){
@@ -775,11 +745,7 @@ int do_rmdir(const char * path){
 	if(entry_of_dir == NULL)
 		return -ENOENT;
 
-	for(int i = 1; i<MAX_NAME_LENGTH && path[i] != 0; i++)
-		if(path[i] == '/'){
-			inRoot = 0;
-			break;
-		}
+	inRoot = containsChar(&(path[1]), '/');
 
 	printf("VERIFICANDO SI ES ROOOT O NO\n");
 	dir = loadDir(entry_of_dir->idxBlock);
